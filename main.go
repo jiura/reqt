@@ -17,26 +17,27 @@ import (
 var (
 	DEBUG bool
 
-	STYLE_FOCUSED          = lipgloss.NewStyle().Foreground(lipgloss.Color("205"))
-	BLURRED_STYLE          = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
+	STYLE_NONE    = lipgloss.NewStyle()
+	STYLE_FOCUSED = lipgloss.NewStyle().Foreground(lipgloss.Color("205"))
+	STYLE_BLURRED = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
+
 	CURSOR_STYLE           = STYLE_FOCUSED
-	STYLE_NONE             = lipgloss.NewStyle()
-	HELP_STYLE             = BLURRED_STYLE
+	HELP_STYLE             = STYLE_BLURRED
 	CURSOR_MODE_HELP_STYLE = lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
 
-	BLURRED_LABEL_METHOD = fmt.Sprintf("%s\n", BLURRED_STYLE.Render("METHOD:"))
-	FOCUSED_LABEL_METHOD = fmt.Sprintf("%s\n", STYLE_FOCUSED.Render("METHOD:"))
+	BLURRED_LABEL_METHOD = fmt.Sprintf("\n%s\n", STYLE_BLURRED.Render("METHOD:"))
+	FOCUSED_LABEL_METHOD = fmt.Sprintf("\n%s\n", STYLE_FOCUSED.Render("METHOD:"))
 
-	BLURRED_LABEL_URL = fmt.Sprintf("\n\n%s", BLURRED_STYLE.Render("URL: "))
+	BLURRED_LABEL_URL = fmt.Sprintf("\n\n%s", STYLE_BLURRED.Render("URL: "))
 	FOCUSED_LABEL_URL = fmt.Sprintf("\n\n%s", STYLE_FOCUSED.Render("URL: "))
 
-	BLURRED_LABEL_BODY = fmt.Sprintf("\n\n%s\n", BLURRED_STYLE.Render("BODY:"))
+	BLURRED_LABEL_BODY = fmt.Sprintf("\n\n%s\n", STYLE_BLURRED.Render("BODY:"))
 	FOCUSED_LABEL_BODY = fmt.Sprintf("\n\n%s\n", STYLE_FOCUSED.Render("BODY:"))
 
-	BLURRED_LABEL_HEADERS = fmt.Sprintf("\n\n%s", BLURRED_STYLE.Render("HEADERS:"))
+	BLURRED_LABEL_HEADERS = fmt.Sprintf("\n\n%s", STYLE_BLURRED.Render("HEADERS:"))
 	FOCUSED_LABEL_HEADERS = fmt.Sprintf("\n\n%s", STYLE_FOCUSED.Render("HEADERS:"))
 
-	BLURRED_BTN_SUBMIT = fmt.Sprintf("[ %s ]", BLURRED_STYLE.Render("Submit"))
+	BLURRED_BTN_SUBMIT = fmt.Sprintf("[ %s ]", STYLE_BLURRED.Render("Submit"))
 	FOCUSED_BTN_SUBMIT = STYLE_FOCUSED.Render("[ Submit ]")
 )
 
@@ -111,8 +112,10 @@ func initialModel() model {
 	{ // URL text input
 		m.urlInput.TextInput = textinput.New()
 		m.urlInput.TextInput.Cursor.Style = CURSOR_STYLE
-		m.urlInput.TextInput.CharLimit = 32
-		m.urlInput.TextInput.Placeholder = "URL"
+		m.urlInput.TextInput.CharLimit = 128
+
+		// TODO: This isn't working. Find out why.
+		// m.urlInput.TextInput.Placeholder = "https://example.com"
 	}
 
 	m.bodyInput.Id = BODY_FORM_ITEM_ID
@@ -120,7 +123,8 @@ func initialModel() model {
 	{ // Body text area
 		m.bodyInput.TextArea = textarea.New()
 		m.bodyInput.TextArea.Cursor.Style = CURSOR_STYLE
-		m.bodyInput.TextArea.Placeholder = "Body"
+		m.bodyInput.TextArea.Placeholder = "{\n  \"foo\":\"bar\"\n}"
+		m.bodyInput.TextArea.ShowLineNumbers = false
 	}
 
 	return m
@@ -136,7 +140,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		switch msg.String() {
-		case "q", "esc":
+		case "esc":
 			return m, tea.Quit
 
 		case "enter":
@@ -151,32 +155,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				// TODO: Submit request
 
 			case BODY_FORM_ITEM_ID:
-			default:
-				if m.currentItemIndex < currentNumOfItems-1 {
-					m.currentItemIndex++
-				} else { // Last item
-					m.currentItemIndex = SUBMIT_FORM_ITEM_ID
-				}
-			}
-
-		case "down":
-			switch m.currentItemIndex {
-			case METHOD_FORM_ITEM_ID:
-				m.currentItemIndex = URL_FORM_ITEM_ID
-
-			case URL_FORM_ITEM_ID:
-				m.currentItemIndex = BODY_FORM_ITEM_ID
-
-			case BODY_FORM_ITEM_ID:
-				// break TODO: Figure out how to make leaving from the text area work without arrow keys
-				if len(m.headers) > 0 {
-					m.currentItemIndex = m.headers[0].Name.Id
-				} else {
-					m.currentItemIndex = SUBMIT_FORM_ITEM_ID
-				}
-
-			case SUBMIT_FORM_ITEM_ID:
-				break
+				return m, m.updateBodyTextArea(msg)
 
 			default:
 				if m.currentItemIndex < currentNumOfItems-1 {
@@ -195,8 +174,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.currentItemIndex = METHOD_FORM_ITEM_ID
 
 			case BODY_FORM_ITEM_ID:
-				// break TODO: Figure out how to make leaving from the text area work without arrow keys
-				m.currentItemIndex = URL_FORM_ITEM_ID
+				if m.bodyInput.TextArea.Line() != 0 {
+					return m, m.updateBodyTextArea(msg)
+				} else {
+					m.currentItemIndex = URL_FORM_ITEM_ID
+				}
 
 			case SUBMIT_FORM_ITEM_ID:
 				if len(m.headers) > 0 {
@@ -213,6 +195,36 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 
+		case "down":
+			switch m.currentItemIndex {
+			case METHOD_FORM_ITEM_ID:
+				m.currentItemIndex = URL_FORM_ITEM_ID
+
+			case URL_FORM_ITEM_ID:
+				m.currentItemIndex = BODY_FORM_ITEM_ID
+
+			case BODY_FORM_ITEM_ID:
+				if m.bodyInput.TextArea.Line() != m.bodyInput.TextArea.LineCount()-1 {
+					return m, m.updateBodyTextArea(msg)
+				} else {
+					if len(m.headers) > 0 {
+						m.currentItemIndex = m.headers[0].Name.Id
+					} else {
+						m.currentItemIndex = SUBMIT_FORM_ITEM_ID
+					}
+				}
+
+			case SUBMIT_FORM_ITEM_ID:
+				break
+
+			default:
+				if m.currentItemIndex < currentNumOfItems-1 {
+					m.currentItemIndex++
+				} else { // Last item
+					m.currentItemIndex = SUBMIT_FORM_ITEM_ID
+				}
+			}
+
 		case "left":
 			switch m.currentItemIndex {
 			case METHOD_FORM_ITEM_ID:
@@ -224,7 +236,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				break
 
 			case BODY_FORM_ITEM_ID:
-				break
+				return m, m.updateBodyTextArea(msg)
 
 			case SUBMIT_FORM_ITEM_ID:
 				break
@@ -246,7 +258,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				break
 
 			case BODY_FORM_ITEM_ID:
-				break
+				return m, m.updateBodyTextArea(msg)
 
 			case SUBMIT_FORM_ITEM_ID:
 				break
@@ -259,8 +271,30 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 
+		case "tab":
+			switch m.currentItemIndex {
+			case BODY_FORM_ITEM_ID:
+				m.bodyInput.TextArea.InsertString("  ")
+			}
+
+		case "ctrl+up":
+			switch m.currentItemIndex {
+			case BODY_FORM_ITEM_ID:
+				m.currentItemIndex = URL_FORM_ITEM_ID
+			}
+
+		case "ctrl+down":
+			switch m.currentItemIndex {
+			case BODY_FORM_ITEM_ID:
+				if len(m.headers) > 0 {
+					m.currentItemIndex = m.headers[0].Name.Id
+				} else {
+					m.currentItemIndex = SUBMIT_FORM_ITEM_ID
+				}
+			}
+
 		default: // Not a command, process text input
-			return m, nil // TODO: Handle input
+			return m, m.updateCurrentInput(msg)
 		}
 	}
 
@@ -286,39 +320,69 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	for i := range m.headers {
 		if m.headers[i].Name.Id == m.currentItemIndex {
 			cmds[m.headers[i].Name.Id] = m.headers[i].Name.TextInput.Focus()
-			// m.headers[i].Name.TextInput.PromptStyle = STYLE_FOCUSED
-			// m.headers[i].Name.TextInput.TextStyle = STYLE_FOCUSED
+			m.headers[i].Name.TextInput.PromptStyle = STYLE_FOCUSED
+			m.headers[i].Name.TextInput.TextStyle = STYLE_FOCUSED
 			continue
 		} else if m.headers[i].Value.Id == m.currentItemIndex {
 			cmds[m.headers[i].Value.Id] = m.headers[i].Value.TextInput.Focus()
-			// m.headers[i].Value.TextInput.PromptStyle = STYLE_FOCUSED
-			// m.headers[i].Value.TextInput.TextStyle = STYLE_FOCUSED
+			m.headers[i].Value.TextInput.PromptStyle = STYLE_FOCUSED
+			m.headers[i].Value.TextInput.TextStyle = STYLE_FOCUSED
 			continue
 		}
 
 		m.headers[i].Name.TextInput.Blur()
-		// m.headers[i].Name.TextInput.PromptStyle = STYLE_NONE
-		// m.headers[i].Name.TextInput.TextStyle = STYLE_NONE
+		m.headers[i].Name.TextInput.PromptStyle = STYLE_NONE
+		m.headers[i].Name.TextInput.TextStyle = STYLE_NONE
 
 		m.headers[i].Value.TextInput.Blur()
-		// m.headers[i].Value.TextInput.PromptStyle = STYLE_NONE
-		// m.headers[i].Value.TextInput.TextStyle = STYLE_NONE
+		m.headers[i].Value.TextInput.PromptStyle = STYLE_NONE
+		m.headers[i].Value.TextInput.TextStyle = STYLE_NONE
 	}
 
 	return m, tea.Batch(cmds...)
 }
 
-// func (m *model) updateInputs(msg tea.Msg) tea.Cmd {
-// 	cmds := make([]tea.Cmd, len(m.inputs))
-//
-// 	// Only text inputs with Focus() set will respond, so it's safe to simply
-// 	// update all of them here without any further logic.
-// 	for i := range m.inputs {
-// 		m.inputs[i], cmds[i] = m.inputs[i].Update(msg)
-// 	}
-//
-// 	return tea.Batch(cmds...)
-// }
+func (m *model) updateBodyTextArea(msg tea.Msg) tea.Cmd {
+	cmd := func() tea.Msg {
+		return ""
+	}
+
+	m.bodyInput.TextArea, cmd = m.bodyInput.TextArea.Update(msg)
+
+	return cmd
+}
+
+func (m *model) updateCurrentInput(msg tea.Msg) tea.Cmd {
+	cmd := func() tea.Msg {
+		return ""
+	}
+
+	switch m.currentItemIndex {
+	case URL_FORM_ITEM_ID:
+		m.urlInput.TextInput, cmd = m.urlInput.TextInput.Update(msg)
+
+	case BODY_FORM_ITEM_ID:
+		m.bodyInput.TextArea, cmd = m.bodyInput.TextArea.Update(msg)
+
+	default:
+		if len(m.headers) > 0 &&
+			m.currentItemIndex > BODY_FORM_ITEM_ID &&
+			m.currentItemIndex < SUBMIT_FORM_ITEM_ID {
+
+			for i := range m.headers {
+				if m.headers[i].Name.Id == m.currentItemIndex {
+					m.headers[i].Name.TextInput, cmd = m.headers[i].Name.TextInput.Update(msg)
+					break
+				} else if m.headers[i].Value.Id == m.currentItemIndex {
+					m.headers[i].Value.TextInput, cmd = m.headers[i].Value.TextInput.Update(msg)
+					break
+				}
+			}
+		}
+	}
+
+	return cmd
+}
 
 func (m model) View() string {
 	s := strings.Builder{}
@@ -347,7 +411,6 @@ func (m model) View() string {
 		} else {
 			s.WriteString(FOCUSED_LABEL_URL)
 		}
-
 		s.WriteString(m.urlInput.TextInput.View())
 
 		if m.currentItemIndex != BODY_FORM_ITEM_ID {
@@ -387,7 +450,7 @@ func (m model) View() string {
 			s.WriteString(FOCUSED_BTN_SUBMIT)
 		}
 
-		s.WriteString("\n{press esc or q to quit}\n\n")
+		s.WriteString("\n\n{press esc to quit}\n\n")
 
 		{ // Debug
 			if DEBUG {
