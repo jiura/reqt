@@ -1,12 +1,25 @@
+/* TODO:
+
+- Implement actual HTTP requests
+- Use os/exec to open Body input on editor of choice
+- Reorganize code in more than one file
+
+*/
+
 package main
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
 	"strconv"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"golang.org/x/term"
 
 	"github.com/charmbracelet/bubbles/cursor"
 	"github.com/charmbracelet/bubbles/textarea"
@@ -98,6 +111,11 @@ type model struct {
 	urlAndBodyMenuLen uint8
 
 	headers []HttpHeader
+
+	responseInfo string
+	responseBody string
+
+	currentWidth int // NOTE: This is only relevant to wrap response body text
 }
 
 func initialModel() model {
@@ -134,6 +152,119 @@ func (m model) Init() tea.Cmd {
 	return nil
 }
 
+func (m *model) submitRequest() {
+	var err error
+
+	var method string = m.methods.Choices[m.methods.SelectedIndex]
+	var url string = m.urlInput.TextInput.Value()
+
+	if !strings.Contains(url, "//") {
+		url = "https://" + url
+	}
+
+	var bodyJson []byte
+	bodyJson, err = json.Marshal(m.bodyInput.TextArea.Value())
+	if err != nil {
+		m.responseInfo = err.Error()
+		return
+	}
+
+	var req *http.Request
+	req, err = http.NewRequest(method, url, bytes.NewReader(bodyJson))
+	if err != nil {
+		m.responseInfo = err.Error()
+		return
+	}
+
+	for i := 0; i < len(m.headers); i++ {
+		var name string = m.headers[i].Name.TextInput.Value()
+		var value string = m.headers[i].Value.TextInput.Value()
+		req.Header.Set(name, value)
+	}
+
+	var resp *http.Response
+	resp, err = http.DefaultClient.Do(req)
+	if err != nil {
+		m.responseInfo = err.Error()
+		return
+	}
+	defer resp.Body.Close()
+
+	sb := strings.Builder{}
+
+	sb.WriteString(resp.Status)
+	sb.WriteString("\n\n--------------------\n")
+
+	for name := range resp.Header {
+		sb.WriteString("\n")
+		sb.WriteString(name)
+		sb.WriteString(": ")
+		sb.WriteString(resp.Header.Get(name))
+	}
+	sb.WriteString("\n\n--------------------\n\n")
+
+	var respBodyBytes []byte
+	respBodyBytes, err = io.ReadAll(resp.Body)
+	if err != nil {
+		sb.WriteString(err.Error())
+	}
+
+	m.responseInfo = sb.String()
+	m.responseBody = string(respBodyBytes)
+}
+
+func (m *model) updateUrlTextInput(msg tea.Msg) tea.Cmd {
+	cmd := func() tea.Msg {
+		return ""
+	}
+
+	m.urlInput.TextInput, cmd = m.urlInput.TextInput.Update(msg)
+
+	return cmd
+}
+
+func (m *model) updateBodyTextArea(msg tea.Msg) tea.Cmd {
+	cmd := func() tea.Msg {
+		return ""
+	}
+
+	m.bodyInput.TextArea, cmd = m.bodyInput.TextArea.Update(msg)
+
+	return cmd
+}
+
+func (m *model) updateCurrentInput(msg tea.Msg) tea.Cmd {
+	cmd := func() tea.Msg {
+		return ""
+	}
+
+	switch m.currentItemIndex {
+	case URL_FORM_ITEM_ID:
+		m.urlInput.TextInput, cmd = m.urlInput.TextInput.Update(msg)
+
+	case BODY_FORM_ITEM_ID:
+		m.bodyInput.TextArea, cmd = m.bodyInput.TextArea.Update(msg)
+
+	default:
+		if len(m.headers) > 0 &&
+			m.currentItemIndex > BODY_FORM_ITEM_ID &&
+			m.currentItemIndex < SUBMIT_FORM_ITEM_ID {
+
+			for i := range m.headers {
+				if m.headers[i].Name.Id == m.currentItemIndex {
+					m.headers[i].Name.TextInput, cmd = m.headers[i].Name.TextInput.Update(msg)
+					break
+				} else if m.headers[i].Value.Id == m.currentItemIndex {
+					m.headers[i].Value.TextInput, cmd = m.headers[i].Value.TextInput.Update(msg)
+					break
+				}
+			}
+		}
+	}
+
+	return cmd
+}
+
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	currentNumOfItems := uint8(len(m.headers)*2 + 3)
 
@@ -152,7 +283,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.currentItemIndex = BODY_FORM_ITEM_ID
 
 			case SUBMIT_FORM_ITEM_ID:
-				// TODO: Submit request
+				m.submitRequest()
+				m.currentWidth, _, _ = term.GetSize(int(os.Stdout.Fd()))
+				return m, tea.Quit
 
 			case BODY_FORM_ITEM_ID:
 				return m, m.updateBodyTextArea(msg)
@@ -188,7 +321,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 
 			default:
-				if m.currentItemIndex <= BODY_FORM_ITEM_ID+2 { // first header value
+				if m.currentItemIndex <= BODY_FORM_ITEM_ID+2 { // First header value
 					m.currentItemIndex = BODY_FORM_ITEM_ID
 				} else {
 					m.currentItemIndex -= 2
@@ -233,7 +366,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 
 			case URL_FORM_ITEM_ID:
-				break
+				return m, m.updateUrlTextInput(msg)
 
 			case BODY_FORM_ITEM_ID:
 				return m, m.updateBodyTextArea(msg)
@@ -255,7 +388,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 
 			case URL_FORM_ITEM_ID:
-				break
+				return m, m.updateUrlTextInput(msg)
 
 			case BODY_FORM_ITEM_ID:
 				return m, m.updateBodyTextArea(msg)
@@ -342,48 +475,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, tea.Batch(cmds...)
 }
 
-func (m *model) updateBodyTextArea(msg tea.Msg) tea.Cmd {
-	cmd := func() tea.Msg {
-		return ""
-	}
-
-	m.bodyInput.TextArea, cmd = m.bodyInput.TextArea.Update(msg)
-
-	return cmd
-}
-
-func (m *model) updateCurrentInput(msg tea.Msg) tea.Cmd {
-	cmd := func() tea.Msg {
-		return ""
-	}
-
-	switch m.currentItemIndex {
-	case URL_FORM_ITEM_ID:
-		m.urlInput.TextInput, cmd = m.urlInput.TextInput.Update(msg)
-
-	case BODY_FORM_ITEM_ID:
-		m.bodyInput.TextArea, cmd = m.bodyInput.TextArea.Update(msg)
-
-	default:
-		if len(m.headers) > 0 &&
-			m.currentItemIndex > BODY_FORM_ITEM_ID &&
-			m.currentItemIndex < SUBMIT_FORM_ITEM_ID {
-
-			for i := range m.headers {
-				if m.headers[i].Name.Id == m.currentItemIndex {
-					m.headers[i].Name.TextInput, cmd = m.headers[i].Name.TextInput.Update(msg)
-					break
-				} else if m.headers[i].Value.Id == m.currentItemIndex {
-					m.headers[i].Value.TextInput, cmd = m.headers[i].Value.TextInput.Update(msg)
-					break
-				}
-			}
-		}
-	}
-
-	return cmd
-}
-
 func (m model) View() string {
 	s := strings.Builder{}
 
@@ -441,23 +532,32 @@ func (m model) View() string {
 		}
 	}
 
-	{ // Draw footer
-		s.WriteString("\n\n")
+	if m.responseInfo == "" {
+		{ // Draw footer
+			s.WriteString("\n\n")
 
-		if m.currentItemIndex != SUBMIT_FORM_ITEM_ID {
-			s.WriteString(BLURRED_BTN_SUBMIT)
-		} else {
-			s.WriteString(FOCUSED_BTN_SUBMIT)
-		}
+			if m.currentItemIndex != SUBMIT_FORM_ITEM_ID {
+				s.WriteString(BLURRED_BTN_SUBMIT)
+			} else {
+				s.WriteString(FOCUSED_BTN_SUBMIT)
+			}
 
-		s.WriteString("\n\n{press esc to quit}\n\n")
+			s.WriteString("\n\n{press esc to quit}\n\n")
 
-		{ // Debug
-			if DEBUG {
-				s.WriteString("Current selection: ")
-				s.WriteString(strconv.Itoa(int(m.currentItemIndex)))
+			{ // Debug
+				if DEBUG {
+					s.WriteString("Current selection: ")
+					s.WriteString(strconv.Itoa(int(m.currentItemIndex)))
+				}
 			}
 		}
+	} else {
+		s.WriteString("\n\n")
+		s.WriteString(STYLE_BLURRED.Render("RESPONSE:"))
+		s.WriteString("\n\n")
+		s.WriteString(m.responseInfo)
+		s.WriteString(lipgloss.NewStyle().Width(m.currentWidth).Render(m.responseBody))
+		s.WriteString("\n")
 	}
 
 	return s.String()
