@@ -1,5 +1,6 @@
 /* TODO:
 
+- Add/remove headers
 - Stopwatch or progress bar when submitting request
 - Exec to open Body input on editor of choice
 - Reorganize code in more than one file
