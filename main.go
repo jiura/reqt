@@ -1,6 +1,5 @@
 /* TODO:
 
-- Implement actual HTTP requests
 - Use os/exec to open Body input on editor of choice
 - Reorganize code in more than one file
 
@@ -158,6 +157,11 @@ func (m *model) submitRequest() {
 	var method string = m.methods.Choices[m.methods.SelectedIndex]
 	var url string = m.urlInput.TextInput.Value()
 
+	if url == "" {
+		m.responseInfo = "No URL found.\n"
+		return
+	}
+
 	if !strings.Contains(url, "//") {
 		url = "https://" + url
 	}
@@ -272,6 +276,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "esc":
+			return m, tea.Quit
+
+		case "ctrl+s":
+			m.submitRequest()
+			m.currentWidth, _, _ = term.GetSize(int(os.Stdout.Fd()))
 			return m, tea.Quit
 
 		case "enter":
