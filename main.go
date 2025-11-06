@@ -1,6 +1,7 @@
 /* TODO:
 
-- Use os/exec to open Body input on editor of choice
+- Stopwatch or progress bar when submitting request
+- Exec to open Body input on editor of choice
 - Reorganize code in more than one file
 
 */
