@@ -1,9 +1,9 @@
 /* TODO:
 
-- Add/remove headers
 - Stopwatch or progress bar when submitting request
 - Exec to open Body input on editor of choice
 - Reorganize code in more than one file
+- Save and open saved requests
 
 */
 
@@ -51,8 +51,16 @@ var (
 	BLURRED_LABEL_HEADERS = fmt.Sprintf("\n\n%s", STYLE_BLURRED.Render("HEADERS:"))
 	FOCUSED_LABEL_HEADERS = fmt.Sprintf("\n\n%s", STYLE_FOCUSED.Render("HEADERS:"))
 
+	BLURRED_LABEL_HEADER_NAME = fmt.Sprintf("\n%s", STYLE_BLURRED.Render("Name: "))
+	FOCUSED_LABEL_HEADER_NAME = fmt.Sprintf("\n%s", STYLE_FOCUSED.Render("Name: "))
+
+	BLURRED_LABEL_HEADER_VALUE = STYLE_BLURRED.Render(" Value: ")
+	FOCUSED_LABEL_HEADER_VALUE = STYLE_FOCUSED.Render(" Value: ")
+
 	BLURRED_BTN_SUBMIT = fmt.Sprintf("[ %s ]", STYLE_BLURRED.Render("Submit"))
 	FOCUSED_BTN_SUBMIT = STYLE_FOCUSED.Render("[ Submit ]")
+
+	BLURRED_LABEL_RESPONSE = STYLE_BLURRED.Render("RESPONSE:")
 )
 
 // enum form items
@@ -116,7 +124,8 @@ type model struct {
 	responseInfo string
 	responseBody string
 
-	currentWidth int // NOTE: This is only relevant to wrap response body text
+	currentNumOfItems uint8
+	currentWidth      int // NOTE: This is only relevant to wrap response body text
 }
 
 func initialModel() model {
@@ -146,11 +155,67 @@ func initialModel() model {
 		m.bodyInput.TextArea.ShowLineNumbers = false
 	}
 
+	m.currentNumOfItems = 3
+
 	return m
 }
 
 func (m model) Init() tea.Cmd {
 	return nil
+}
+
+func (m *model) newHeader() {
+	nameId := uint16((uint8(len(m.headers)) * 2) + BODY_FORM_ITEM_ID + 1)
+
+	var idLimit uint16 = 254
+	if nameId >= idLimit {
+		return
+	}
+
+	h := HttpHeader{}
+
+	h.Name.Id = uint8(nameId)
+	h.Value.Id = uint8(nameId + 1)
+
+	h.Name.TextInput = textinput.New()
+	h.Name.TextInput.Cursor.Style = CURSOR_STYLE
+	h.Name.TextInput.CharLimit = 128
+	h.Name.TextInput.Width = 24
+
+	h.Value.TextInput = textinput.New()
+	h.Value.TextInput.Cursor.Style = CURSOR_STYLE
+	h.Value.TextInput.CharLimit = 128
+	h.Value.TextInput.Width = 24
+
+	m.headers = append(m.headers, h)
+	m.currentNumOfItems += 2
+	m.currentItemIndex = h.Name.Id
+}
+
+func (m *model) removeCurrentHeader() {
+	var i int
+	for i = range m.headers {
+		if m.currentItemIndex == m.headers[i].Name.Id ||
+			m.currentItemIndex == m.headers[i].Value.Id {
+			m.headers = append(m.headers[:i], m.headers[i+1:]...)
+			break
+		}
+	}
+
+	m.currentNumOfItems -= 2
+	var numOfItemsWithNoHeaders uint8 = 3
+
+	if m.currentNumOfItems == numOfItemsWithNoHeaders {
+		m.currentItemIndex = BODY_FORM_ITEM_ID
+	} else if m.currentItemIndex > m.currentNumOfItems-2 { // If it's last header
+		m.currentItemIndex -= 2
+	}
+
+	for i < len(m.headers) {
+		m.headers[i].Name.Id -= 2
+		m.headers[i].Value.Id -= 2
+		i++
+	}
 }
 
 func (m *model) submitRequest() {
@@ -272,8 +337,6 @@ func (m *model) updateCurrentInput(msg tea.Msg) tea.Cmd {
 }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	currentNumOfItems := uint8(len(m.headers)*2 + 3)
-
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		switch msg.String() {
@@ -284,6 +347,15 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.submitRequest()
 			m.currentWidth, _, _ = term.GetSize(int(os.Stdout.Fd()))
 			return m, tea.Quit
+
+		case "ctrl+n":
+			m.newHeader()
+
+		case "ctrl+r":
+			if m.currentItemIndex > BODY_FORM_ITEM_ID &&
+				m.currentItemIndex < SUBMIT_FORM_ITEM_ID {
+				m.removeCurrentHeader()
+			}
 
 		case "enter":
 			switch m.currentItemIndex {
@@ -302,7 +374,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, m.updateBodyTextArea(msg)
 
 			default:
-				if m.currentItemIndex < currentNumOfItems-1 {
+				if m.currentItemIndex < m.currentNumOfItems-1 {
 					m.currentItemIndex++
 				} else { // Last item
 					m.currentItemIndex = SUBMIT_FORM_ITEM_ID
@@ -362,9 +434,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				break
 
 			default:
-				if m.currentItemIndex < currentNumOfItems-1 {
-					m.currentItemIndex++
-				} else { // Last item
+				if m.currentItemIndex < m.currentNumOfItems-2 {
+					m.currentItemIndex += 2
+				} else { // Last header name or value
 					m.currentItemIndex = SUBMIT_FORM_ITEM_ID
 				}
 			}
@@ -408,7 +480,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				break
 
 			default:
-				if m.currentItemIndex < currentNumOfItems-1 {
+				if m.currentItemIndex < m.currentNumOfItems-1 {
 					m.currentItemIndex++
 				} else { // Last item
 					m.currentItemIndex = SUBMIT_FORM_ITEM_ID
@@ -442,8 +514,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 
+	// TODO: Check if I can update these states when handling user inputs
+	// to avoid unnecessarily modifying items that that had no changes
+
 	// Handle each input state
-	cmds := make([]tea.Cmd, currentNumOfItems)
+	cmds := make([]tea.Cmd, m.currentNumOfItems)
 
 	if m.currentItemIndex != URL_FORM_ITEM_ID {
 		m.urlInput.TextInput.Blur()
@@ -462,18 +537,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	for i := range m.headers {
-		if m.headers[i].Name.Id == m.currentItemIndex {
-			cmds[m.headers[i].Name.Id] = m.headers[i].Name.TextInput.Focus()
-			m.headers[i].Name.TextInput.PromptStyle = STYLE_FOCUSED
-			m.headers[i].Name.TextInput.TextStyle = STYLE_FOCUSED
-			continue
-		} else if m.headers[i].Value.Id == m.currentItemIndex {
-			cmds[m.headers[i].Value.Id] = m.headers[i].Value.TextInput.Focus()
-			m.headers[i].Value.TextInput.PromptStyle = STYLE_FOCUSED
-			m.headers[i].Value.TextInput.TextStyle = STYLE_FOCUSED
-			continue
-		}
-
 		m.headers[i].Name.TextInput.Blur()
 		m.headers[i].Name.TextInput.PromptStyle = STYLE_NONE
 		m.headers[i].Name.TextInput.TextStyle = STYLE_NONE
@@ -481,6 +544,20 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.headers[i].Value.TextInput.Blur()
 		m.headers[i].Value.TextInput.PromptStyle = STYLE_NONE
 		m.headers[i].Value.TextInput.TextStyle = STYLE_NONE
+
+		if m.headers[i].Name.Id == m.currentItemIndex {
+			cmds[m.headers[i].Name.Id] = m.headers[i].Name.TextInput.Focus()
+			m.headers[i].Name.TextInput.PromptStyle = STYLE_FOCUSED
+			m.headers[i].Name.TextInput.TextStyle = STYLE_FOCUSED
+			continue
+		}
+
+		if m.headers[i].Value.Id == m.currentItemIndex {
+			cmds[m.headers[i].Value.Id] = m.headers[i].Value.TextInput.Focus()
+			m.headers[i].Value.TextInput.PromptStyle = STYLE_FOCUSED
+			m.headers[i].Value.TextInput.TextStyle = STYLE_FOCUSED
+			continue
+		}
 	}
 
 	return m, tea.Batch(cmds...)
@@ -535,10 +612,21 @@ func (m model) View() string {
 			s.WriteString("\nNone")
 		}
 
-		for i := 0; i < len(m.headers); i++ {
-			s.WriteString("\nName: ")
+		for i := range m.headers {
+			if m.currentItemIndex != m.headers[i].Name.Id {
+				s.WriteString(BLURRED_LABEL_HEADER_NAME)
+			} else {
+				s.WriteString(FOCUSED_LABEL_HEADER_NAME)
+			}
+
 			s.WriteString(m.headers[i].Name.TextInput.View())
-			s.WriteString(" Value: ")
+
+			if m.currentItemIndex != m.headers[i].Value.Id {
+				s.WriteString(BLURRED_LABEL_HEADER_VALUE)
+			} else {
+				s.WriteString(FOCUSED_LABEL_HEADER_VALUE)
+			}
+
 			s.WriteString(m.headers[i].Value.TextInput.View())
 		}
 	}
@@ -553,22 +641,26 @@ func (m model) View() string {
 				s.WriteString(FOCUSED_BTN_SUBMIT)
 			}
 
-			s.WriteString("\n\n{press esc to quit}\n\n")
+			s.WriteString("\n\n{ esc - quit | ctrl+s - new header | ctrl+r - remove header | ctrl+s - submit request }\n\n")
 
 			{ // Debug
 				if DEBUG {
 					s.WriteString("Current selection: ")
 					s.WriteString(strconv.Itoa(int(m.currentItemIndex)))
+					s.WriteString("\nCurrent num of items: ")
+					s.WriteString(strconv.Itoa(int(m.currentNumOfItems)))
+					s.WriteString("\nHeader array size: ")
+					s.WriteString(strconv.Itoa(len(m.headers)))
 				}
 			}
 		}
 	} else {
 		s.WriteString("\n\n")
-		s.WriteString(STYLE_BLURRED.Render("RESPONSE:"))
+		s.WriteString(BLURRED_LABEL_RESPONSE)
 		s.WriteString("\n\n")
 		s.WriteString(m.responseInfo)
 		s.WriteString(lipgloss.NewStyle().Width(m.currentWidth).Render(m.responseBody))
-		s.WriteString("\n")
+		s.WriteString("\n\n")
 	}
 
 	return s.String()
