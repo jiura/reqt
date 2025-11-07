@@ -1,6 +1,7 @@
 /* TODO:
 
 - Stopwatch or progress bar when submitting request
+- Press h to open help menu
 - Exec to open Body input on editor of choice
 - Reorganize code in more than one file
 - Save and open saved requests
@@ -641,7 +642,7 @@ func (m model) View() string {
 				s.WriteString(FOCUSED_BTN_SUBMIT)
 			}
 
-			s.WriteString("\n\n{ esc - quit | ctrl+s - new header | ctrl+r - remove header | ctrl+s - submit request }\n\n")
+			s.WriteString("\n\n{ esc - quit | ctrl+s - new header | ctrl+r - remove current header | ctrl+s - submit request }\n\n")
 
 			{ // Debug
 				if DEBUG {
